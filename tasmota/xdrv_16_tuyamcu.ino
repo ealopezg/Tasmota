@@ -430,11 +430,12 @@ void TuyaSendCmd(uint8_t cmd, uint8_t payload[] = nullptr, uint16_t payload_len 
   TuyaSerial->write(0x55);                  // Tuya header 55AA
   TuyaSerial->write(0xAA);
   TuyaSerial->write((uint8_t)0x00);         // version 00
+  TuyaSerial->write((uint8_t)0x0000);
   TuyaSerial->write(cmd);                   // Tuya command
   TuyaSerial->write(payload_len >> 8);      // following data length (Hi)
   TuyaSerial->write(payload_len & 0xFF);    // following data length (Lo)
   char log_data[700];                       // Was MAX_LOGSZ
-  snprintf_P(log_data, sizeof(log_data), PSTR("TYA: Send \"55aa00%02x%02x%02x"), cmd, payload_len >> 8, payload_len & 0xFF);
+  snprintf_P(log_data, sizeof(log_data), PSTR("TYA: Send \"55aa000000%02x%02x%02x"), cmd, payload_len >> 8, payload_len & 0xFF);
   for (uint32_t i = 0; i < payload_len; ++i) {
     TuyaSerial->write(payload[i]);
     checksum += payload[i];
@@ -1142,6 +1143,7 @@ void TuyaInit(void)
 
 void TuyaSerialInput(void)
 {
+  uint8_t serial_header_counter = 0;
   while (TuyaSerial->available()) {
     yield();
     uint8_t serial_in_byte = TuyaSerial->read();
@@ -1151,13 +1153,25 @@ void TuyaSerialInput(void)
       Tuya.buffer[Tuya.byte_counter++] = serial_in_byte;
       Tuya.cmd_checksum += serial_in_byte;
     }
-    else if (Tuya.cmd_status == 1 && serial_in_byte == 0xAA) { // Only packtes with header 0x55AA are valid
-      Tuya.cmd_status = 2;
+    else if (Tuya.cmd_status == 1 && serial_in_byte == 0xAA)
+    { // Only packtes with header 0x55AA are valid
 
-      Tuya.byte_counter = 0;
       Tuya.buffer[Tuya.byte_counter++] = 0x55;
       Tuya.buffer[Tuya.byte_counter++] = 0xAA;
       Tuya.cmd_checksum = 0xFF;
+    }
+    else if (Tuya.cmd_status == 1 && serial_header_counter < 2)
+    {
+
+      serial_header_counter++;
+      Tuya.buffer[Tuya.byte_counter++] = serial_in_byte;
+      Tuya.cmd_checksum += serial_in_byte;
+      if (serial_header_counter == 2)
+      {
+        Tuya.cmd_status = 2;
+        Tuya.byte_counter = 0;
+        serial_header_counter = 0;
+      }
     }
     else if (Tuya.cmd_status == 2) {
       if (Tuya.byte_counter == 5) { // Get length of data
